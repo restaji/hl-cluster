@@ -1,6 +1,4 @@
-const INFO = import.meta.env.DEV
-  ? "/hl-info"
-  : "https://api.hyperliquid.xyz/info";
+const INFO = "/api/hl-info";
 
 export async function hl<T>(body: unknown, signal?: AbortSignal): Promise<T> {
   let delay = 800;

@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/hl-info": {
+      "/api/hl-info": {
         target: "https://api.hyperliquid.xyz",
         changeOrigin: true,
         rewrite: () => "/info",
