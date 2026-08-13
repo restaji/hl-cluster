@@ -25,15 +25,51 @@ export function useTape() {
   const [progress, setProgress] = useState("Paste an address");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [lookupBusy, setLookupBusy] = useState(false);
   const ac = useRef<AbortController | null>(null);
+  const lookupAc = useRef<AbortController | null>(null);
   const tapeDone = useRef(false);
   const lookupHeld = useRef<Lookup | null>(null);
+  const inflight = useRef<string | null>(null);
+  const trades = useRef<TapeData["trades"]>([]);
 
   const [lookup, setLookup] = useState<Lookup | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
+  trades.current = data.trades;
+
+  const runLookup = useCallback(async (addr: string) => {
+    if (!FULL_ADDR.test(addr)) return;
+    const target = addr.toLowerCase();
+    if (inflight.current === target || lookupHeld.current?.addr === target) return;
+
+    lookupAc.current?.abort();
+    const next = new AbortController();
+    lookupAc.current = next;
+    inflight.current = target;
+    setLookupBusy(true);
+    setLookupError(null);
+    setProgress("Positions");
+    try {
+      const res = await lookupAddress(target, trades.current, next.signal);
+      if (next.signal.aborted) return;
+      lookupHeld.current = res;
+      setLookup(res);
+      setProgress(tapeDone.current ? "Live" : "Positions");
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      setLookupError((e as Error).message ?? "Lookup failed");
+    } finally {
+      if (!next.signal.aborted) {
+        inflight.current = null;
+        setLookupBusy(false);
+      }
+    }
+  }, []);
+
   const loadAll = useCallback(async (addr?: string) => {
     ac.current?.abort();
+    lookupAc.current?.abort();
     const next = new AbortController();
     ac.current = next;
     tapeDone.current = false;
@@ -46,11 +82,14 @@ export function useTape() {
 
     try {
       if (target) {
+        inflight.current = target;
+        setLookupBusy(true);
         setProgress("Positions");
-        const res = await lookupAddress(target, [], next.signal);
+        const res = await lookupAddress(target, trades.current, next.signal);
         if (next.signal.aborted) return;
         lookupHeld.current = res;
         setLookup(res);
+        setLookupBusy(false);
         phase = "tape";
       } else {
         lookupHeld.current = null;
@@ -82,18 +121,27 @@ export function useTape() {
       else setError(msg);
       setProgress("Error");
     } finally {
-      if (!next.signal.aborted) setBusy(false);
+      if (!next.signal.aborted) {
+        setBusy(false);
+        setLookupBusy(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    return () => ac.current?.abort();
+    return () => {
+      ac.current?.abort();
+      lookupAc.current?.abort();
+    };
   }, []);
 
   const clearLookup = useCallback(() => {
+    lookupAc.current?.abort();
     lookupHeld.current = null;
+    inflight.current = null;
     setLookup(null);
     setLookupError(null);
+    setLookupBusy(false);
   }, []);
 
   const loadFees = useCallback(async (root: string) => {
@@ -113,7 +161,7 @@ export function useTape() {
   }, []);
 
   return {
-    data, progress, error, busy, loadAll, loadFees,
+    data, progress, error, busy, lookupBusy, loadAll, runLookup, loadFees,
     lookup, lookupError, clearLookup,
   };
 }

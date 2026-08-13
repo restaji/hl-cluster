@@ -13,7 +13,15 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "pairs", label: "Pairs" },
 ];
 
-function Addr({ address, dim = false }: { address: string; dim?: boolean }) {
+function Addr({
+  address,
+  dim = false,
+  onPick,
+}: {
+  address: string;
+  dim?: boolean;
+  onPick?: (addr: string) => void;
+}) {
   return (
     <a
       className={`addr${dim ? " dim" : ""}`}
@@ -21,7 +29,13 @@ function Addr({ address, dim = false }: { address: string; dim?: boolean }) {
       target="_blank"
       rel="noreferrer"
       title={address}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (onPick && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+          e.preventDefault();
+          onPick(address);
+        }
+      }}
     >
       {shortAddr(address)}
     </a>
@@ -155,7 +169,7 @@ function posCaption(data: Lookup) {
 
 export default function App() {
   const {
-    data, progress, error, busy, loadAll, loadFees,
+    data, progress, error, busy, lookupBusy, loadAll, runLookup, loadFees,
     lookup, lookupError, clearLookup,
   } = useTape();
   const [tab, setTab] = useState<Tab>("clusters");
@@ -167,7 +181,18 @@ export default function App() {
   const qTrim = q.trim();
   const qFullAddr = /^0x[a-fA-F0-9]{40}$/.test(qTrim);
 
-  const go = () => void loadAll(qFullAddr ? qTrim : undefined);
+  const fetchAddr = (addr: string) => {
+    const a = addr.trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(a)) return;
+    setQ(a);
+    if (data.fills) void runLookup(a);
+    else void loadAll(a);
+  };
+
+  const go = () => {
+    if (qFullAddr) fetchAddr(qTrim);
+    else void loadAll();
+  };
 
   useEffect(() => {
     if (!data.clusters.length) return;
@@ -248,7 +273,7 @@ export default function App() {
             onChange={(e) => {
               const v = e.target.value;
               setQ(v);
-              if (/^0x[a-fA-F0-9]{40}$/.test(v.trim())) void loadAll(v.trim());
+              if (/^0x[a-fA-F0-9]{40}$/.test(v.trim())) fetchAddr(v.trim());
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") go();
@@ -263,10 +288,10 @@ export default function App() {
           <button
             type="button"
             className="btn"
-            onClick={go}
-            title="Load positions, cluster, and tape"
+            onClick={() => void loadAll(qFullAddr ? qTrim : undefined)}
+            title="Reload live positions and tape from Hyperliquid"
           >
-            {busy ? progress : "Refresh"}
+            {busy || lookupBusy ? progress : "Refresh"}
           </button>
         </div>
       </header>
@@ -309,7 +334,12 @@ export default function App() {
       )}
 
       {lookup && (
-        <LookupCard data={lookup} fills={data.fills} onClose={clearLookup} />
+        <LookupCard
+          data={lookup}
+          fills={data.fills}
+          onClose={clearLookup}
+          onPickAddr={fetchAddr}
+        />
       )}
 
       <nav className="tabs">
@@ -393,9 +423,12 @@ export default function App() {
               color="#3d3a8a"
               format={(v) => String(v)}
               active={picked}
-              onPick={setPicked}
+              onPick={(id) => {
+                setPicked(id);
+                fetchAddr(id);
+              }}
             />
-            <p className="cap">Fills on tape · click row for members</p>
+            <p className="cap">Fills on tape · click row to fetch that cluster live</p>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -430,10 +463,13 @@ export default function App() {
                       ]
                         .filter(Boolean)
                         .join(" ") || undefined}
-                      onClick={() => setPicked(c.root)}
+                      onClick={() => {
+                        setPicked(c.root);
+                        fetchAddr(c.root);
+                      }}
                     >
                       <td>
-                        <Addr address={c.root} />
+                        <Addr address={c.root} onPick={fetchAddr} />
                       </td>
                       <td className="num">{c.size}</td>
                       <td className="num">{c.tape}</td>
@@ -456,14 +492,19 @@ export default function App() {
           {selected && (
             <aside className="panel">
               <div className="panel-h">
-                <Addr address={selected.root} />
+                <Addr address={selected.root} onPick={fetchAddr} />
                 <span className="panel-meta">
                   {selected.size} · {selected.onTape.length} on tape
                 </span>
               </div>
               <div className="members">
                 {selected.members.map((m) => (
-                  <Addr key={m} address={m} dim={!onTape.has(m.toLowerCase())} />
+                  <Addr
+                    key={m}
+                    address={m}
+                    dim={!onTape.has(m.toLowerCase())}
+                    onPick={fetchAddr}
+                  />
                 ))}
               </div>
             </aside>
@@ -505,13 +546,13 @@ export default function App() {
                     <td className="num">{h.px}</td>
                     <td className="num">{h.sz}</td>
                     <td>
-                      <Addr address={h.buyer} />
+                      <Addr address={h.buyer} onPick={fetchAddr} />
                     </td>
                     <td>
-                      <Addr address={h.seller} />
+                      <Addr address={h.seller} onPick={fetchAddr} />
                     </td>
                     <td>
-                      <Addr address={h.root} />
+                      <Addr address={h.root} onPick={fetchAddr} />
                     </td>
                   </tr>
                 ))}
@@ -548,10 +589,10 @@ export default function App() {
                 {recipSort.sorted.map((r) => (
                   <tr key={`${r.a}-${r.b}`}>
                     <td>
-                      <Addr address={r.a} />
+                      <Addr address={r.a} onPick={fetchAddr} />
                     </td>
                     <td>
-                      <Addr address={r.b} />
+                      <Addr address={r.b} onPick={fetchAddr} />
                     </td>
                     <td className="num">{r.n}</td>
                     <td className="num">{r.bal.toFixed(2)}</td>
@@ -580,10 +621,12 @@ function LookupCard({
   data,
   fills,
   onClose,
+  onPickAddr,
 }: {
   data: Lookup;
   fills: number;
   onClose: () => void;
+  onPickAddr: (addr: string) => void;
 }) {
   const verdict = data.intra > 0
     ? `${data.intra} intra-cluster fill${data.intra === 1 ? "" : "s"} — wash confirmed`
@@ -603,11 +646,11 @@ function LookupCard({
             {data.truncated ? " · first 40 queried" : ""}
           </p>
           <h2>
-            <Addr address={data.addr} />
+            <Addr address={data.addr} onPick={onPickAddr} />
             {data.root !== data.addr && (
               <>
                 {" → master "}
-                <Addr address={data.root} />
+                <Addr address={data.root} onPick={onPickAddr} />
               </>
             )}
           </h2>
@@ -682,7 +725,7 @@ function LookupCard({
                   >
                     {data.isCluster && (
                       <td>
-                        <Addr address={p.addr} />
+                        <Addr address={p.addr} onPick={onPickAddr} />
                       </td>
                     )}
                     <td>{p.coin}</td>
@@ -720,9 +763,13 @@ function LookupCard({
               </thead>
               <tbody>
                 {data.members.map((m) => (
-                  <tr key={m.addr} className={m.self ? "on" : undefined}>
+                  <tr
+                    key={m.addr}
+                    className={m.self ? "on" : undefined}
+                    onClick={() => onPickAddr(m.addr)}
+                  >
                     <td>
-                      <Addr address={m.addr} dim={!m.self && m.pos === 0} />
+                      <Addr address={m.addr} dim={!m.self && m.pos === 0} onPick={onPickAddr} />
                     </td>
                     <td className="num">{dash(m.av, usdShort)}</td>
                     <td className="num">{dash(m.ntl, usdShort)}</td>
@@ -751,9 +798,12 @@ function LookupCard({
                   <Empty cols={3}>No counterparties on the loaded tape</Empty>
                 ) : (
                   data.counterparties.map((c) => (
-                    <tr key={c.addr}>
+                    <tr
+                      key={c.addr}
+                      onClick={() => onPickAddr(c.addr)}
+                    >
                       <td>
-                        <Addr address={c.addr} />
+                        <Addr address={c.addr} onPick={onPickAddr} />
                       </td>
                       <td className="num">{c.n}</td>
                       <td className="num">{usdShort(c.ntl)}</td>
@@ -787,10 +837,10 @@ function LookupCard({
                     <td>{h.coin}</td>
                     <td className="num">{usdShort(h.ntl)}</td>
                     <td>
-                      <Addr address={h.buyer} />
+                      <Addr address={h.buyer} onPick={onPickAddr} />
                     </td>
                     <td>
-                      <Addr address={h.seller} />
+                      <Addr address={h.seller} onPick={onPickAddr} />
                     </td>
                   </tr>
                 ))}
